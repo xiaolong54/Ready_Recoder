@@ -23,6 +23,11 @@ class ConfigManager:
             "port": 8080,
             "enable": True
         },
+        "monitor": {
+            "interval_sec": 60,
+            "max_workers": 8,
+            "request_timeout_sec": 10
+        },
         "webhook": {
             "enable": False,
             "url": "",

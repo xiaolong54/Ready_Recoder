@@ -9,12 +9,20 @@ log:
   console: true
   file: logs/app.log
   level: info
+monitor:
+  interval_sec: 60
+  max_workers: 8
+  request_timeout_sec: 10
 record:
   filename_template: '{platform}/{room_id}/{year}/{month}/{day}/{title}_{time}'
   format: flv
   output_dir: recordings
   quality: origin
-rooms: []
+rooms:
+- auto_record: true
+  name: ''
+  platform: douyin
+  room_id: '60829777'
 version: '1.0'
 webhook:
   enable: false

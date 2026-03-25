@@ -1,13 +1,13 @@
+﻿import os
 import sys
-import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config_manager import ConfigManager
-from room_manager import RoomManager
-from recorder_core import RecorderManager
 from api_server import APIServer
+from config_manager import ConfigManager
 from platform_parser import PlatformParser
+from recorder_core import RecorderManager
+from room_manager import RoomManager
 
 
 class LiveRecorderApp:
@@ -25,12 +25,24 @@ class LiveRecorderApp:
                 result["platform"],
                 result["room_id"],
                 name,
-                auto_record
+                auto_record,
             )
         return False
 
     def add_room(self, platform: str, room_id: str, name: str = "", auto_record: bool = True) -> bool:
         return self.room_manager.add_room(platform, room_id, name, auto_record)
+
+    def search_targets(self, platform: str, query: str, limit: int = 20):
+        return self.room_manager.search_targets(platform, query, limit)
+
+    def add_room_by_query(
+        self,
+        platform: str,
+        query: str,
+        name: str = "",
+        auto_record: bool = True,
+    ):
+        return self.room_manager.add_room_by_query(platform, query, name, auto_record)
 
     def remove_room(self, platform: str, room_id: str) -> bool:
         return self.room_manager.remove_room(platform, room_id)
@@ -75,33 +87,31 @@ class LiveRecorderApp:
 
 def main():
     print("=" * 60)
-    print("抖音直播录像工具 - 参考 bililive-go")
+    print("SocialMediaCut - Live Recorder")
     print("=" * 60)
     print()
 
     app = LiveRecorderApp()
 
-    print("支持的平台:", PlatformParser.get_supported_platforms())
-    print()
-
-    print("使用方法:")
-    print("  1. GUI模式: python gui.py")
-    print("  2. API服务: 程序内置HTTP API")
-    print()
+    print("Supported platforms:", PlatformParser.get_supported_platforms())
+    print("Usage:")
+    print("  1. GUI mode: python gui.py")
+    print("  2. API service: built-in HTTP API")
 
     app.start_api_server()
     app.start_monitor()
 
-    print("\n按 Ctrl+C 停止服务...")
+    print("\nPress Ctrl+C to stop...")
 
     try:
         import time
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\n正在停止服务...")
+        print("\nStopping services...")
         app.stop_all()
-        print("服务已停止")
+        print("Stopped.")
 
 
 if __name__ == "__main__":

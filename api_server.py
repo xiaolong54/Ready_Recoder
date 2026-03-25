@@ -1,8 +1,9 @@
-import json
+﻿import json
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-from typing import Callable, Dict
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Dict
+from urllib.parse import parse_qs, urlparse
+
 from room_manager import RoomManager
 
 
@@ -32,6 +33,8 @@ class APIHandler(BaseHTTPRequestHandler):
             self._handle_get_status()
         elif path == "/api/platforms":
             self._handle_get_platforms()
+        elif path == "/api/targets/search":
+            self._handle_search_targets(query)
         else:
             self._send_error(404, "Not found")
 
@@ -43,7 +46,7 @@ class APIHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
         try:
             data = json.loads(body)
-        except:
+        except Exception:
             data = {}
 
         if path == "/api/rooms":
@@ -85,10 +88,10 @@ class APIHandler(BaseHTTPRequestHandler):
             self._send_error(404, "Room not found")
 
     def _handle_add_room(self, data: dict):
-        platform = data.get("platform")
-        room_id = data.get("room_id")
+        platform = (data.get("platform") or "").strip().lower()
+        room_id = (data.get("room_id") or "").strip()
         name = data.get("name", "")
-        auto_record = data.get("auto_record", True)
+        auto_record = bool(data.get("auto_record", True))
 
         if not platform or not room_id:
             self._send_error(400, "Missing platform or room_id")
@@ -136,26 +139,55 @@ class APIHandler(BaseHTTPRequestHandler):
             self._send_error(500, "Failed to stop recording")
 
     def _handle_get_recorders(self):
-        if hasattr(self.room_manager, 'recorder') and self.room_manager.recorder:
+        if hasattr(self.room_manager, "recorder") and self.room_manager.recorder:
             status = self.room_manager.recorder.get_all_recorders_status()
             self._send_json({"code": 0, "data": status})
         else:
             self._send_json({"code": 0, "data": []})
 
     def _handle_get_status(self):
-        self._send_json({
-            "code": 0,
-            "data": {
-                "monitor_running": self.room_manager.running,
-                "room_count": len(self.room_manager.rooms),
-                "recording_count": sum(1 for r in self.room_manager.rooms.values() if r.is_recording)
+        rooms = self.room_manager.get_room_list()
+        self._send_json(
+            {
+                "code": 0,
+                "data": {
+                    "monitor_running": self.room_manager.running,
+                    "room_count": len(rooms),
+                    "recording_count": sum(1 for room in rooms if room.get("is_recording")),
+                },
             }
-        })
+        )
 
     def _handle_get_platforms(self):
         from platform_parser import PlatformParser
+
         platforms = PlatformParser.get_supported_platforms()
         self._send_json({"code": 0, "data": platforms})
+
+    def _handle_search_targets(self, query: Dict):
+        platform = (query.get("platform", ["douyin"])[0] or "douyin").strip().lower()
+        q = (query.get("q", [""])[0] or "").strip()
+
+        try:
+            limit = int(query.get("limit", [20])[0])
+        except Exception:
+            self._send_error(400, "Invalid limit")
+            return
+
+        if not q:
+            self._send_error(400, "Missing query parameter q")
+            return
+
+        if platform != "douyin":
+            self._send_json({"code": 40002, "error": "Name search currently supports douyin only", "data": []})
+            return
+
+        candidates = self.room_manager.search_targets(platform, q, limit=limit)
+        if not candidates:
+            self._send_json({"code": 40401, "error": "No candidates found", "data": []})
+            return
+
+        self._send_json({"code": 0, "data": candidates})
 
     def _handle_start_monitor(self):
         self.room_manager.start_monitor()
@@ -169,16 +201,17 @@ class APIHandler(BaseHTTPRequestHandler):
         response = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", len(response))
+        self.send_header("Content-Length", str(len(response)))
         self.end_headers()
         self.wfile.write(response)
 
     def _send_error(self, code: int, message: str):
+        payload = json.dumps({"code": code, "error": message}, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        error = json.dumps({"code": code, "error": message}, ensure_ascii=False).encode("utf-8")
-        self.wfile.write(error)
+        self.wfile.write(payload)
 
 
 class APIServer:
@@ -194,30 +227,34 @@ class APIServer:
         self.server = HTTPServer((self.host, self.port), APIHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        print(f"[APIServer] 启动成功 http://{self.host}:{self.port}")
-        print(f"[APIServer] API端点:")
-        print(f"  GET  /api/rooms          - 获取所有房间")
-        print(f"  GET  /api/room/<p>/<id>   - 获取指定房间")
-        print(f"  POST /api/rooms          - 添加房间")
-        print(f"  DEL  /api/room/<p>/<id>  - 删除房间")
-        print(f"  POST /api/room/start     - 开始录制")
-        print(f"  POST /api/room/stop      - 停止录制")
-        print(f"  GET  /api/recorders      - 获取录制器状态")
-        print(f"  GET  /api/status         - 获取系统状态")
-        print(f"  GET  /api/platforms      - 获取支持的平台")
-        print(f"  POST /api/monitor/start  - 启动监控")
-        print(f"  POST /api/monitor/stop   - 停止监控")
+
+        print(f"[APIServer] Started at http://{self.host}:{self.server.server_port}")
+        print("[APIServer] Endpoints:")
+        print("  GET  /api/rooms")
+        print("  GET  /api/room/<platform>/<room_id>")
+        print("  POST /api/rooms")
+        print("  DEL  /api/room/<platform>/<room_id>")
+        print("  POST /api/room/start")
+        print("  POST /api/room/stop")
+        print("  GET  /api/recorders")
+        print("  GET  /api/status")
+        print("  GET  /api/platforms")
+        print("  GET  /api/targets/search?platform=douyin&q=<query>&limit=<n>")
+        print("  POST /api/monitor/start")
+        print("  POST /api/monitor/stop")
 
     def stop(self):
         if self.server:
             self.server.shutdown()
-            print("[APIServer] 已停止")
+            self.server.server_close()
+            print("[APIServer] Stopped")
 
 
 if __name__ == "__main__":
     from config_manager import ConfigManager
-    config = ConfigManager()
+
+    _ = ConfigManager()
     server = APIServer()
     server.start(None)
-    input("按Enter键停止服务器...\n")
+    input("Press Enter to stop server...\n")
     server.stop()
