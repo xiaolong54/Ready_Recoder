@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gui_state import LogBuffer, NavigationState, ThemeState
 from main import LiveRecorderApp
 from platform_parser import PlatformParser
+from utils import format_follower_count, get_live_status_text, get_live_status_symbol
 
 
 class DashboardGUI:
@@ -722,63 +723,60 @@ class DashboardGUI:
 
     def _on_add_by_query(self):
         dialog = tk.Toplevel(self.root)
-        dialog.title("名字/ID 添加")
-        dialog.geometry("780x540")
+        dialog.title("添加直播间")
+        dialog.geometry("780x480")
         dialog.transient(self.root)
         dialog.grab_set()
 
         frame = ttk.Frame(dialog, padding=14)
         frame.pack(fill="both", expand=True)
-        frame.grid_rowconfigure(3, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
         frame.grid_columnconfigure(0, weight=1)
 
+        # 第一行: 搜索输入区
         row = ttk.Frame(frame)
-        row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         row.grid_columnconfigure(3, weight=1)
         ttk.Label(row, text="平台").grid(row=0, column=0, padx=(0, 8))
         platform_var = tk.StringVar(value="douyin")
         ttk.Combobox(row, textvariable=platform_var, values=PlatformParser.get_supported_platforms(), state="readonly", width=12).grid(row=0, column=1, padx=(0, 8))
-        ttk.Label(row, text="名字或ID").grid(row=0, column=2, padx=(0, 8))
+        ttk.Label(row, text="搜索").grid(row=0, column=2, padx=(0, 8))
         query_entry = ttk.Entry(row)
         query_entry.grid(row=0, column=3, sticky="ew", padx=(0, 8))
-
-        row2 = ttk.Frame(frame)
-        row2.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        row2.grid_columnconfigure(1, weight=1)
-        ttk.Label(row2, text="房间名称(可选)").grid(row=0, column=0, padx=(0, 8))
-        name_entry = ttk.Entry(row2)
-        name_entry.grid(row=0, column=1, sticky="ew")
         auto_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(frame, text="开播自动录制", variable=auto_var).grid(row=2, column=0, sticky="w", pady=(0, 8))
+        ttk.Checkbutton(row, text="开播自动录制", variable=auto_var).grid(row=0, column=4, padx=(12, 0))
 
-        status_var = tk.StringVar(value="输入名字、ID 或 URL 后点击搜索")
-        columns = ("nickname", "room_id", "uid", "source")
-        result_box = ttk.LabelFrame(frame, text="候选对象", padding=8)
-        result_box.grid(row=3, column=0, sticky="nsew")
+        # 第二行: 候选列表区
+        status_var = tk.StringVar(value="输入主播名称、ID 或 URL 后点击搜索")
+        columns = ("nickname", "room_id", "follower_count", "is_live")
+        result_box = ttk.LabelFrame(frame, text="搜索结果", padding=8)
+        result_box.grid(row=2, column=0, sticky="nsew")
         result_box.grid_rowconfigure(0, weight=1)
         result_box.grid_columnconfigure(0, weight=1)
         result_tree = ttk.Treeview(result_box, columns=columns, show="headings", style="Dashboard.Treeview")
-        result_tree.heading("nickname", text="昵称")
-        result_tree.heading("room_id", text="房间ID")
-        result_tree.heading("uid", text="UID")
-        result_tree.heading("source", text="来源")
+        result_tree.heading("nickname", text="主播名称")
+        result_tree.heading("room_id", text="平台ID")
+        result_tree.heading("follower_count", text="粉丝数")
+        result_tree.heading("is_live", text="开播状态")
         result_tree.column("nickname", width=220, anchor="w")
-        result_tree.column("room_id", width=160, anchor="center")
-        result_tree.column("uid", width=160, anchor="center")
-        result_tree.column("source", width=120, anchor="center")
+        result_tree.column("room_id", width=120, anchor="center")
+        result_tree.column("follower_count", width=120, anchor="e")
+        result_tree.column("is_live", width=100, anchor="center")
         scroll = ttk.Scrollbar(result_box, orient="vertical", command=result_tree.yview)
         result_tree.configure(yscrollcommand=scroll.set)
         result_tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
 
+        # 第三行: 底部操作区
         footer = ttk.Frame(frame)
-        footer.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        footer.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         footer.grid_columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=status_var).grid(row=0, column=0, sticky="w")
         buttons = ttk.Frame(footer)
         buttons.grid(row=0, column=1, sticky="e")
 
         candidates_by_id: Dict[str, Dict] = {}
+        add_button = tb.Button(buttons, text="添加选中", bootstyle="success", command=lambda: None, state="disabled")
 
         def render_candidates(candidates: List[Dict]):
             candidates_by_id.clear()
@@ -787,6 +785,18 @@ class DashboardGUI:
             for idx, candidate in enumerate(candidates):
                 iid = f"c_{idx}"
                 candidates_by_id[iid] = candidate
+                
+                # 格式化粉丝数
+                follower_count = candidate.get("follower_count", 0)
+                follower_text = format_follower_count(follower_count) if follower_count else "-"
+                
+                # 格式化开播状态
+                is_live = candidate.get("is_live")
+                if is_live is None:
+                    live_text = "未知"
+                else:
+                    live_text = f"{get_live_status_text(is_live)} {get_live_status_symbol(is_live)}"
+                
                 result_tree.insert(
                     "",
                     "end",
@@ -794,8 +804,8 @@ class DashboardGUI:
                     values=(
                         candidate.get("nickname", "") or "-",
                         candidate.get("room_id", ""),
-                        candidate.get("uid", "") or "-",
-                        candidate.get("source", ""),
+                        follower_text,
+                        live_text,
                     ),
                 )
 
@@ -803,9 +813,10 @@ class DashboardGUI:
             platform = platform_var.get().strip().lower()
             query = query_entry.get().strip()
             if not query:
-                messagebox.showerror("错误", "请输入名字、ID或URL")
+                messagebox.showerror("错误", "请输入主播名称、ID或URL")
                 return
             status_var.set("搜索中...")
+            add_button.configure(state="disabled")
 
             def on_done(value, err):
                 if err:
@@ -817,8 +828,11 @@ class DashboardGUI:
                 if candidates:
                     first = result_tree.get_children()[0]
                     result_tree.selection_set(first)
+                    result_tree.focus(first)
+                    add_button.configure(state="normal")
                     status_var.set(f"找到 {len(candidates)} 个候选")
                 else:
+                    add_button.configure(state="disabled")
                     status_var.set("未找到候选对象")
 
             self._run_async_value(lambda: self.app.search_targets(platform, query, limit=20), on_done)
@@ -833,19 +847,24 @@ class DashboardGUI:
                 return
             platform = candidate.get("platform", "")
             room_id = candidate.get("room_id", "")
-            room_name = name_entry.get().strip() or candidate.get("nickname", "")
+            room_name = candidate.get("nickname", "")
             auto_record = auto_var.get()
             if self.app.add_room(platform, room_id, room_name, auto_record):
                 dialog.destroy()
                 self._refresh_room_data(log_events=False)
                 self._set_status(f"已添加 {platform}/{room_id}")
-                self._log("ACTION", f"名字/ID 添加成功 {platform}/{room_id}", source="ROOM")
+                self._log("ACTION", f"搜索添加成功 {platform}/{room_id}", source="ROOM")
             else:
                 messagebox.showerror("失败", "房间已存在或添加失败")
 
-        tb.Button(row, text="搜索", bootstyle="info", command=do_search).grid(row=0, column=4)
+        add_button.configure(command=do_add_selected)
+        tb.Button(row, text="搜索", bootstyle="primary", command=do_search).grid(row=0, column=5, padx=(8, 0))
         tb.Button(buttons, text="取消", bootstyle="secondary", command=dialog.destroy).pack(side="right", padx=(8, 0))
-        tb.Button(buttons, text="添加选中", bootstyle="primary", command=do_add_selected).pack(side="right")
+        add_button.pack(side="right")
+
+        # 绑定快捷键
+        query_entry.bind("<Return>", lambda e: do_search())
+        result_tree.bind("<Double-1>", lambda e: do_add_selected())
 
     def on_close(self):
         if self.refresh_timer:

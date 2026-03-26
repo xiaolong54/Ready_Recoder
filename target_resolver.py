@@ -1,8 +1,11 @@
 ﻿import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 from api_client import DouyinAPIClient
 from platform_parser import PlatformParser
+from utils import format_follower_count, get_live_status_text
 
 
 class TargetResolver:
@@ -26,6 +29,8 @@ class TargetResolver:
                     "nickname": "",
                     "uid": str(parsed["room_id"]),
                     "source": "url",
+                    "follower_count": 0,
+                    "is_live": None,
                 }
             ]
 
@@ -38,6 +43,8 @@ class TargetResolver:
                     "nickname": "",
                     "uid": str(query),
                     "source": "id",
+                    "follower_count": 0,
+                    "is_live": None,
                 }
             ]
 
@@ -55,8 +62,14 @@ class TargetResolver:
                         "nickname": user.get("nickname", "") or "",
                         "uid": str(uid),
                         "source": "name",
+                        "follower_count": user.get("follower_count", 0) or 0,
+                        "is_live": None,
                     }
                 )
+            
+            # 异步查询开播状态
+            self._enrich_with_live_status(candidates)
+            
             return self._deduplicate(candidates, limit)
 
         return []
@@ -69,6 +82,39 @@ class TargetResolver:
         if platform == "douyu":
             return re.match(r"^[A-Za-z0-9_]+$", query) is not None
         return False
+
+    def _enrich_with_live_status(self, candidates: List[Dict]) -> None:
+        """
+        异步查询候选列表的开播状态
+        
+        Args:
+            candidates: 候选列表,会原地修改添加is_live字段
+        """
+        if not candidates:
+            return
+        
+        def query_status(candidate: Dict) -> Dict:
+            """查询单个候选的开播状态"""
+            platform = candidate.get("platform")
+            room_id = candidate.get("room_id")
+            try:
+                status = PlatformParser.get_live_status(platform, room_id, timeout_sec=5)
+                return {"candidate": candidate, "is_live": status.get("is_live", False) if status else None}
+            except Exception as e:
+                print(f"[TargetResolver] Query live status failed for {platform}/{room_id}: {e}")
+                return {"candidate": candidate, "is_live": None}
+        
+        # 使用线程池并发查询
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(query_status, candidate) for candidate in candidates]
+            for future in as_completed(futures, timeout=10):
+                try:
+                    result = future.result()
+                    if result:
+                        candidate = result["candidate"]
+                        candidate["is_live"] = result["is_live"]
+                except Exception:
+                    continue
 
     def _deduplicate(self, candidates: List[Dict], limit: int) -> List[Dict]:
         result: List[Dict] = []

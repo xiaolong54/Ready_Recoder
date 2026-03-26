@@ -20,9 +20,9 @@ record:
   quality: origin
 rooms:
 - auto_record: true
-  name: ''
+  name: coke老师
   platform: douyin
-  room_id: '60829777'
+  room_id: Ccoke
 version: '1.0'
 webhook:
   enable: false
