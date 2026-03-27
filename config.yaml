@@ -18,11 +18,7 @@ record:
   format: flv
   output_dir: recordings
   quality: origin
-rooms:
-- auto_record: true
-  name: coke老师
-  platform: douyin
-  room_id: Ccoke
+rooms: []
 version: '1.0'
 webhook:
   enable: false

@@ -4,11 +4,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 from urllib.parse import parse_qs, urlparse
 
-from room_manager import RoomManager
+from services import RoomService
 
 
 class APIHandler(BaseHTTPRequestHandler):
-    room_manager: RoomManager = None
+    room_manager: RoomService = None
 
     def log_message(self, format, *args):
         print(f"[API] {args[0]}")

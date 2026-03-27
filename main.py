@@ -3,86 +3,89 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from api_server import APIServer
-from config_manager import ConfigManager
-from platform_parser import PlatformParser
-from recorder_core import RecorderManager
-from room_manager import RoomManager
+from app_core import LiveRecorderApp as AppCore
 
 
+# 为了向后兼容,创建一个包装类
 class LiveRecorderApp:
+    """向后兼容的包装类"""
+    
     def __init__(self, config_file: str = "config.yaml"):
-        self.config = ConfigManager(config_file)
-        self.recorder_manager = RecorderManager(self.config.get("record.output_dir", "recordings"))
-        self.room_manager = RoomManager(self.config)
-        self.room_manager.set_recorder(self.recorder_manager)
-        self.api_server = None
-
+        self._app = AppCore(config_file)
+    
+    @property
+    def room_manager(self):
+        """为了向后兼容,提供room_manager属性"""
+        return self._app.room_service
+    
     def add_room_by_url(self, url: str, name: str = "", auto_record: bool = True) -> bool:
-        result = PlatformParser.parse_url(url)
-        if result:
-            return self.room_manager.add_room(
-                result["platform"],
-                result["room_id"],
-                name,
-                auto_record,
-            )
-        return False
-
+        """通过URL添加房间"""
+        return self._app.add_room_by_url(url, name, auto_record)
+    
     def add_room(self, platform: str, room_id: str, name: str = "", auto_record: bool = True) -> bool:
-        return self.room_manager.add_room(platform, room_id, name, auto_record)
-
+        """添加房间"""
+        return self._app.add_room(platform, room_id, name, auto_record)
+    
     def search_targets(self, platform: str, query: str, limit: int = 20):
-        return self.room_manager.search_targets(platform, query, limit)
-
-    def add_room_by_query(
-        self,
-        platform: str,
-        query: str,
-        name: str = "",
-        auto_record: bool = True,
-    ):
-        return self.room_manager.add_room_by_query(platform, query, name, auto_record)
-
+        """搜索目标"""
+        return self._app.search_targets(platform, query, limit)
+    
+    def add_room_by_query(self, platform: str, query: str, name: str = "", auto_record: bool = True):
+        """通过查询添加房间"""
+        results = self.search_targets(platform, query, limit=20)
+        if results and len(results) > 0:
+            candidate = results[0]
+            return self.add_room(
+                candidate.get("platform"),
+                candidate.get("room_id"),
+                name or candidate.get("nickname", ""),
+                auto_record
+            )
+        return {"success": False, "reason": "no_candidates"}
+    
     def remove_room(self, platform: str, room_id: str) -> bool:
-        return self.room_manager.remove_room(platform, room_id)
-
+        """移除房间"""
+        return self._app.remove_room(platform, room_id)
+    
     def start_recording(self, platform: str, room_id: str) -> bool:
-        return self.room_manager.start_recording(platform, room_id)
-
+        """开始录制"""
+        return self._app.start_recording(platform, room_id)
+    
     def stop_recording(self, platform: str, room_id: str) -> bool:
-        return self.room_manager.stop_recording(platform, room_id)
-
+        """停止录制"""
+        return self._app.stop_recording(platform, room_id)
+    
     def get_rooms(self):
-        return self.room_manager.get_room_list()
-
+        """获取所有房间"""
+        return self._app.get_rooms()
+    
     def check_room_status(self, platform: str, room_id: str):
-        return self.room_manager.check_room_status(platform, room_id)
-
+        """检查房间状态"""
+        return self._app.check_room_status(platform, room_id)
+    
     def start_monitor(self):
-        self.room_manager.start_monitor()
-
+        """启动监控"""
+        self._app.start_monitor()
+    
     def stop_monitor(self):
-        self.room_manager.stop_monitor()
-
+        """停止监控"""
+        self._app.stop_monitor()
+    
     def start_api_server(self):
-        if self.config.get("api.enable", True):
-            host = self.config.get("api.host", "0.0.0.0")
-            port = self.config.get("api.port", 8080)
-            self.api_server = APIServer(host, port)
-            self.api_server.start(self.room_manager)
-
+        """启动API服务器"""
+        self._app.start_api_server()
+    
     def stop_api_server(self):
-        if self.api_server:
-            self.api_server.stop()
-
+        """停止API服务器"""
+        self._app.stop_api_server()
+    
     def get_recorders_status(self):
-        return self.recorder_manager.get_all_recorders_status()
-
+        """获取录制器状态"""
+        return self._app.get_recorders_status()
+    
     def stop_all(self):
-        self.stop_monitor()
-        self.stop_api_server()
-        self.recorder_manager.stop_all()
+        """停止所有服务"""
+        self._app.stop_all()
 
 
 def main():
@@ -93,7 +96,7 @@ def main():
 
     app = LiveRecorderApp()
 
-    print("Supported platforms:", PlatformParser.get_supported_platforms())
+    print("Supported platforms:", app._app.get_supported_platforms())
     print("Usage:")
     print("  1. GUI mode: python gui.py")
     print("  2. API service: built-in HTTP API")

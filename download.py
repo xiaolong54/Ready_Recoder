@@ -11,8 +11,21 @@ import subprocess
 import os
 from pathlib import Path
 from datetime import datetime
-from config import RECORDINGS_DIR, HEADERS
+from config_manager import ConfigManager
 from metadata import MetadataManager
+
+# 配置路径
+BASE_DIR = Path(__file__).parent
+RECORDINGS_DIR = BASE_DIR / "recordings"
+
+RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://www.douyin.com/",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 
 class VideoDownloader:

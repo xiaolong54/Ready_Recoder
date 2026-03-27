@@ -13,8 +13,8 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gui_state import LogBuffer, NavigationState, ThemeState
-from main import LiveRecorderApp
-from platform_parser import PlatformParser
+from app_core import LiveRecorderApp
+from platforms import PlatformRegistry
 from utils import format_follower_count, get_live_status_text, get_live_status_symbol
 
 
@@ -30,6 +30,9 @@ class DashboardGUI:
         self.previous_room_states: Dict[str, Dict[str, bool]] = {}
         self.selected_room_key: Optional[str] = None
         self.refresh_timer = None
+        
+        # 使用新的平台注册中心
+        self.supported_platforms = PlatformRegistry.get_supported_platforms()
 
         self.theme_state = ThemeState(mode="dark", light_theme="flatly", dark_theme="cyborg")
         self.navigation_state = NavigationState(["overview", "rooms", "logs"], "overview")
@@ -455,7 +458,7 @@ class DashboardGUI:
         total = len(rooms)
         live_count = sum(1 for room in rooms if room.get("is_live"))
         rec_count = sum(1 for room in rooms if room.get("is_recording"))
-        monitor_running = self.app.room_manager.running
+        monitor_running = self.app.monitor_service.running
         self.kpi_total_var.set(str(total))
         self.kpi_live_var.set(str(live_count))
         self.kpi_recording_var.set(str(rec_count))
@@ -576,7 +579,7 @@ class DashboardGUI:
             self.btn_rooms_monitor.configure(text="启动监控", bootstyle="warning")
 
     def _on_toggle_monitor(self):
-        if not self.app.room_manager.running:
+        if not self.app.monitor_service.running:
             self.app.start_monitor()
             self._set_status("监控已启动")
             self._log("ACTION", "启动自动监控", source="MONITOR")
@@ -649,7 +652,7 @@ class DashboardGUI:
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="平台").grid(row=0, column=0, sticky="w", pady=6)
         platform_var = tk.StringVar(value="douyin")
-        ttk.Combobox(frame, textvariable=platform_var, values=PlatformParser.get_supported_platforms(), state="readonly").grid(row=0, column=1, sticky="ew", pady=6)
+        ttk.Combobox(frame, textvariable=platform_var, values=self.supported_platforms, state="readonly").grid(row=0, column=1, sticky="ew", pady=6)
         ttk.Label(frame, text="房间ID").grid(row=1, column=0, sticky="w", pady=6)
         room_id_entry = ttk.Entry(frame)
         room_id_entry.grid(row=1, column=1, sticky="ew", pady=6)
@@ -682,41 +685,119 @@ class DashboardGUI:
         tb.Button(buttons, text="添加", bootstyle="primary", command=do_add).pack(side="right")
 
     def _on_add_by_url(self):
+        """通过URL添加房间,支持短链接"""
         dialog = tk.Toplevel(self.root)
         dialog.title("URL 添加")
-        dialog.geometry("580x240")
+        dialog.geometry("620x300")
         dialog.transient(self.root)
         dialog.grab_set()
 
         frame = ttk.Frame(dialog, padding=14)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="直播间 URL").grid(row=0, column=0, sticky="w", pady=6)
-        url_entry = ttk.Entry(frame)
-        url_entry.grid(row=1, column=0, sticky="ew", pady=6)
-        ttk.Label(frame, text="名称(可选)").grid(row=2, column=0, sticky="w", pady=6)
-        name_entry = ttk.Entry(frame)
-        name_entry.grid(row=3, column=0, sticky="ew", pady=6)
-        auto_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(frame, text="开播自动录制", variable=auto_var).grid(row=4, column=0, sticky="w", pady=6)
-        ttk.Label(frame, text="支持：douyin.com, bilibili.com, douyu.com").grid(row=5, column=0, sticky="w", pady=4)
+        frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
+
+        # URL输入区域
+        input_frame = ttk.Frame(frame)
+        input_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        input_frame.grid_columnconfigure(0, weight=1)
+        
+        ttk.Label(input_frame, text="直播间 URL").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        url_entry = ttk.Entry(input_frame)
+        url_entry.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        
+        ttk.Label(input_frame, text="名称(可选)").grid(row=2, column=0, sticky="w", pady=(0, 6))
+        name_entry = ttk.Entry(input_frame)
+        name_entry.grid(row=3, column=0, sticky="ew", pady=(0, 6))
+        
+        auto_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(input_frame, text="开播自动录制", variable=auto_var).grid(row=4, column=0, sticky="w", pady=(6, 4))
+        
+        # 提示信息
+        help_label = ttk.Label(
+            input_frame,
+            text="支持格式:\n• 抖音: v.douyin.com/xxx (短链接), live.douyin.com/xxx\n• B站: live.bilibili.com/xxx\n• 斗鱼: douyu.com/xxx",
+            foreground="gray"
+        )
+        help_label.grid(row=5, column=0, sticky="w", pady=(4, 0))
+
+        # 状态提示
+        status_var = tk.StringVar(value="")
+        status_label = ttk.Label(frame, textvariable=status_var, foreground="#007bff", wraplength=580)
+        status_label.grid(row=1, column=0, sticky="w", pady=(0, 10))
+
+        # 按钮区域
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, sticky="e", pady=(10, 0))
+        buttons.grid(row=2, column=0, sticky="e")
 
         def do_add():
             url = url_entry.get().strip()
             room_name = name_entry.get().strip()
             auto_record = auto_var.get()
+            
             if not url:
                 messagebox.showerror("错误", "请输入 URL")
                 return
-            if self.app.add_room_by_url(url, name=room_name, auto_record=auto_record):
-                dialog.destroy()
-                self._refresh_room_data(log_events=False)
-                self._set_status("URL 添加成功")
-                self._log("ACTION", f"URL 添加成功: {url}", source="ROOM")
-            else:
-                messagebox.showerror("失败", "URL 解析失败或添加失败")
+            
+            # 显示加载状态
+            status_var.set("正在解析 URL...")
+            url_entry.configure(state="disabled")
+            buttons.pack_forget()
+            
+            def add_worker():
+                try:
+                    from exceptions import URLParseError, RoomAlreadyExistsException, ExceptionHandler
+                    
+                    success = self.app.add_room_by_url(url, name=room_name, auto_record=auto_record)
+                    
+                    if success:
+                        # 成功
+                        status_var.set("✓ 添加成功!")
+                        self._refresh_room_data(log_events=False)
+                        self._set_status("URL 添加成功")
+                        self._log("ACTION", f"URL 添加成功: {url}", source="ROOM")
+                        
+                        # 延迟关闭对话框
+                        dialog.after(800, lambda: [
+                            dialog.destroy(),
+                            url_entry.configure(state="normal")
+                        ])
+                    else:
+                        # 失败
+                        status_var.set("✗ 添加失败")
+                        messagebox.showerror(
+                            "添加失败",
+                            f"无法添加直播间\n\nURL: {url}\n\n可能原因:\n1. URL格式不正确\n2. 不支持的平台\n3. 房间已存在"
+                        )
+                        url_entry.configure(state="normal")
+                        buttons.grid(row=2, column=0, sticky="e")
+                        status_var.set("")
+                
+                except URLParseError as e:
+                    status_var.set("✗ URL解析失败")
+                    messagebox.showerror("URL解析失败", e.get_user_message())
+                    url_entry.configure(state="normal")
+                    buttons.grid(row=2, column=0, sticky="e")
+                    status_var.set("")
+                
+                except RoomAlreadyExistsException as e:
+                    status_var.set("✗ 房间已存在")
+                    messagebox.showerror("房间已存在", e.get_user_message())
+                    url_entry.configure(state="normal")
+                    buttons.grid(row=2, column=0, sticky="e")
+                    status_var.set("")
+                
+                except Exception as e:
+                    status_var.set("✗ 解析失败")
+                    user_message = ExceptionHandler.handle_exception(e, show_traceback=False)
+                    messagebox.showerror("错误", user_message)
+                    url_entry.configure(state="normal")
+                    buttons.grid(row=2, column=0, sticky="e")
+                    status_var.set("")
+            
+            # 在后台线程中执行
+            thread = threading.Thread(target=add_worker, daemon=True)
+            thread.start()
 
         tb.Button(buttons, text="取消", bootstyle="secondary", command=dialog.destroy).pack(side="right", padx=(8, 0))
         tb.Button(buttons, text="添加", bootstyle="primary", command=do_add).pack(side="right")
@@ -739,7 +820,7 @@ class DashboardGUI:
         row.grid_columnconfigure(3, weight=1)
         ttk.Label(row, text="平台").grid(row=0, column=0, padx=(0, 8))
         platform_var = tk.StringVar(value="douyin")
-        ttk.Combobox(row, textvariable=platform_var, values=PlatformParser.get_supported_platforms(), state="readonly", width=12).grid(row=0, column=1, padx=(0, 8))
+        ttk.Combobox(row, textvariable=platform_var, values=self.supported_platforms, state="readonly", width=12).grid(row=0, column=1, padx=(0, 8))
         ttk.Label(row, text="搜索").grid(row=0, column=2, padx=(0, 8))
         query_entry = ttk.Entry(row)
         query_entry.grid(row=0, column=3, sticky="ew", padx=(0, 8))
@@ -815,25 +896,54 @@ class DashboardGUI:
             if not query:
                 messagebox.showerror("错误", "请输入主播名称、ID或URL")
                 return
+            
             status_var.set("搜索中...")
             add_button.configure(state="disabled")
 
-            def on_done(value, err):
-                if err:
+            def on_done(result, err):
+                if err or not result:
                     status_var.set("搜索失败")
-                    messagebox.showerror("失败", err)
+                    messagebox.showerror("失败", str(err) if err else "未知错误")
                     return
-                candidates = value or []
-                render_candidates(candidates)
-                if candidates:
-                    first = result_tree.get_children()[0]
-                    result_tree.selection_set(first)
-                    result_tree.focus(first)
-                    add_button.configure(state="normal")
-                    status_var.set(f"找到 {len(candidates)} 个候选")
+                
+                # 使用新的AddRoomResult
+                if hasattr(result, 'success'):
+                    if result.success:
+                        candidates = result.data or []
+                        render_candidates(candidates)
+                        if candidates:
+                            first = result_tree.get_children()[0]
+                            result_tree.selection_set(first)
+                            result_tree.focus(first)
+                            add_button.configure(state="normal")
+                            status_var.set(f"找到 {len(candidates)} 个候选")
+                        else:
+                            add_button.configure(state="disabled")
+                            status_var.set("未找到候选对象")
+                    else:
+                        # 显示友好的错误信息
+                        if hasattr(result, 'error') and result.error:
+                            if hasattr(result.error, 'get_user_message'):
+                                messagebox.showerror("搜索失败", result.error.get_user_message())
+                            else:
+                                messagebox.showerror("搜索失败", str(result.error))
+                        else:
+                            messagebox.showerror("搜索失败", "未知错误")
+                        add_button.configure(state="disabled")
+                        status_var.set("搜索失败")
                 else:
-                    add_button.configure(state="disabled")
-                    status_var.set("未找到候选对象")
+                    # 兼容旧格式(返回列表)
+                    candidates = result or []
+                    render_candidates(candidates)
+                    if candidates:
+                        first = result_tree.get_children()[0]
+                        result_tree.selection_set(first)
+                        result_tree.focus(first)
+                        add_button.configure(state="normal")
+                        status_var.set(f"找到 {len(candidates)} 个候选")
+                    else:
+                        add_button.configure(state="disabled")
+                        status_var.set("未找到候选对象")
 
             self._run_async_value(lambda: self.app.search_targets(platform, query, limit=20), on_done)
 

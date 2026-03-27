@@ -9,7 +9,13 @@ Description:
 import json
 from pathlib import Path
 from datetime import datetime
-from config import METADATA_FILE
+
+# 配置路径
+BASE_DIR = Path(__file__).parent
+RECORDINGS_DIR = BASE_DIR / "recordings"
+METADATA_FILE = RECORDINGS_DIR / "metadata.json"
+
+RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class MetadataManager:
